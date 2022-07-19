@@ -1,0 +1,174 @@
+###########################################
+!apt -qq update
+!apt -qq -y install libnvtoolsext1
+!apt -qq -y install xvfb freeglut3-dev ffmpeg
+!pip -q install gym
+!pip -q install pyglet
+!pip -q install pyopengl
+!pip -q install pyvirtualdisplay
+!pip install -q gym-super-mario-bros==7.3.0
+############################################
+
+############################################
+from pyvirtualdisplay import Display
+display = Display(visible=0, size=(1024, 768))
+display.start()
+import os
+#os.environ["DISPLAY"] = ":" + str(display.display) + "." + str(display.screen)
+
+import torch
+from torch import nn
+from torchvision import transforms as T
+from PIL import Image
+import numpy as np
+from pathlib import Path
+from collections import deque
+import random, datetime, os, copy
+
+# Gym is an OpenAI toolkit for RL
+import gym
+from gym.spaces import Box
+from gym.wrappers import FrameStack
+
+# NES Emulator for OpenAI Gym
+from nes_py.wrappers import JoypadSpace
+##############################################
+
+##############################################
+# Super Mario environment for OpenAI Gym
+import gym_super_mario_bros
+
+
+# Initialize Super Mario environment
+# https://github.com/Kautenja/gym-super-mario-bros
+env = gym_super_mario_bros.make("SuperMarioBros-1-1-v3")
+
+# Limit the action-space to
+#   0. walk right
+#   1. jump right
+env = JoypadSpace(env, [["right"], ["right", "A"]])
+#env = JoypadSpace(env, SIMPLE_MOVEMENT)
+#action = [0, 0, 0, 1, 1, 0] # [up, left, down, right, A, B] 
+
+env.reset()
+###############################################
+
+###############################################
+from gym.wrappers import GrayScaleObservation
+import cv2
+from matplotlib import pyplot as plt
+env = GrayScaleObservation(env , keep_dim=True)
+###############################################
+
+###############################################
+state, reward, done, info = env.step(action=0)
+init_state= state.reshape([240,256]) #3D to 2D
+unique_arr = np.unique(init_state)   #Instances
+
+
+def enemy_each_block(target_are, target_list):
+  tmp2 = np.full_like(target_are, False, dtype=bool)
+  #target_are[0][0]=5
+  #print(target_are)
+  for number in target_list:
+    tmp3 = np.where(target_are == number, True, False)
+    tmp2 = tmp2 | tmp3
+
+  return(np.all(tmp2))
+
+def enemy(in_state, unique_arr):
+  tmp = in_state.reshape([240,256]) #3D to 2D
+  #unique_arr = np.unique(tmp)   #Instances
+  unique_arr= np.delete(unique_arr, np.where(unique_arr == 124) , None)
+  
+  #Ground starts from 209 and Ground color=124
+  for i in range(240):
+    if( i >= 209):
+      tmp[i]=0
+
+  plt.imshow(tmp)
+  #Mario=107 Mario's size=15
+  #Get Mario's position
+  search_number = 107
+  mario_width=15
+  pos = np.where(tmp == 107)  #Extract Mario's position
+  y_min=np.min(pos[0])
+  y_max=np.max(pos[0])
+  x_min=np.min(pos[1])
+  x_max=np.max(pos[1])
+  mario=tmp[y_min:y_max,x_min:x_max] #Mario
+  mario_r= tmp[y_min:y_max,x_max+1:x_max+1+mario_width] #Mario right
+  mario_l= tmp[y_min:y_max,x_min-1:x_max-1-mario_width] #Mario left
+  mario_t= tmp[y_min-1:y_min-1-mario_width,x_min:x_max] #Mario top
+  mario_tr= tmp[y_min-1:y_min-1-mario_width, x_max+1:x_max+1+mario_width] #Mario top-right
+  mario_tl= tmp[y_min-1:y_min-1-mario_width, x_min-1:x_max-1-mario_width] #Mario top-left
+  mario_d= tmp[y_max+1:y_max+1+mario_width, x_min:x_max] #Mario down
+  mario_dr= tmp[y_max+1:y_max+1+mario_width, x_max+1:x_max+1+mario_width]#Mario down-right
+  mario_dl= tmp[y_max+1:y_max+1+mario_width, x_min-1:x_max-1-mario_width]#Mario down-left
+
+  enemy_block=[mario_tl, mario_t, mario_tr, mario_r, mario_dr, mario_d, mario_dl, mario_l]
+  out = []
+  for tmp_block in enemy_block:
+    out.append(enemy_each_block(mario_r, unique_arr))
+  return out
+
+out=enemy(init_state,unique_arr)
+#print(out)
+##################################################
+
+##################################################
+# 試行回数
+EPISODE_NUMB = 1
+
+# 最大試行時間
+MAX_TIME = 300
+##################################################
+
+##################################################
+import copy
+
+#https://qiita.com/nsd24/items/7758410128872d684e05
+#GA:https://morishin.hatenablog.com/entry/marioai-2009
+
+frames = []
+for i in range(EPISODE_NUMB):
+    observation = env.reset()  # reset for each new trial
+
+    init_state= state.reshape([240,256]) #3D to 2D
+    unique_arr = np.unique(init_state)   #Instances
+    print(unique_arr)
+
+    done = False
+    total_reward = 0
+    total_time = 0
+    time = 0
+    while not done and total_time < MAX_TIME: # run for MAX_TIME timesteps or until done, whichever is first
+        frames.append(copy.deepcopy(env.render(mode = 'rgb_array')))
+        action = env.action_space.sample()  # select a random action
+        #print(action)
+        #print("\n")
+        
+        next_state, reward, done, info = env.step(action)
+        out=enemy(next_state, unique_arr)
+        print(out)
+
+        total_reward += reward
+        total_time += 1
+    print('test episode:', i, 'reward:', total_reward, 'time:', total_time)
+#######################################################
+
+######################################################
+import matplotlib.pyplot as plt
+import matplotlib.animation
+import numpy as np
+from IPython.display import HTML
+
+plt.figure(figsize=(frames[0].shape[1] / 72.0, frames[0].shape[0] / 72.0), dpi = 72)
+patch = plt.imshow(frames[0])
+plt.axis('off')
+animate = lambda i: patch.set_data(frames[i])
+ani = matplotlib.animation.FuncAnimation(plt.gcf(), animate, frames=len(frames), interval = 50)
+HTML(ani.to_jshtml())
+#########################################################
+  
+
